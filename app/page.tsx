@@ -9,6 +9,7 @@ import RestaurantList, { type MenuItem, type Restaurant } from "@/app/components
 type Recommendation = {
   title: string;
   summary: string;
+  optimal: boolean;
   dishes: {
     name: string;
     rationale: string;
@@ -182,6 +183,10 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ApiResponse | null>(null);
 
+  function slugify(value: string) {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  }
+
   const cartTotal = useMemo(
     () => cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0),
     [cartItems],
@@ -298,6 +303,35 @@ export default function Home() {
     );
   }
 
+  function addSmartItemToCart(itemName: string, source: "dish" | "swap") {
+    const id = `smart-${slugify(itemName)}`;
+    const price = source === "dish" ? 179 : 99;
+
+    setCartItems((current) => {
+      const existing = current.find((item) => item.id === id);
+      if (existing) {
+        return current.map((item) =>
+          item.id === id ? { ...item, quantity: item.quantity + 1 } : item,
+        );
+      }
+
+      return [
+        ...current,
+        {
+          id,
+          name: itemName,
+          price,
+          restaurantName: "NutriCraver Smart Add-on",
+          quantity: 1,
+        },
+      ];
+    });
+
+    if (source === "swap") {
+      toggleSwap(itemName);
+    }
+  }
+
   function handleCheckout() {
     if (cartItems.length === 0) {
       setError("Add items to cart before checkout.");
@@ -329,6 +363,7 @@ export default function Home() {
         body: JSON.stringify({
           userId,
           craving: cartCraving,
+          cartItems: cartItems.map((item) => item.name),
           diet,
           allergies,
           pantry,
@@ -479,26 +514,39 @@ export default function Home() {
 
                   <div className="grid gap-3">
                     {response.recommendation.dishes.map((dish) => (
-                      <DishItem key={dish.name} name={dish.name} rationale={dish.rationale} nutrients={dish.nutrients} />
+                      <DishItem
+                        key={dish.name}
+                        name={dish.name}
+                        rationale={dish.rationale}
+                        nutrients={dish.nutrients}
+                        onAddToCart={() => addSmartItemToCart(dish.name, "dish")}
+                      />
                     ))}
                   </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    {response.recommendation.swaps.map((swap) => (
-                      <button
-                        key={swap}
-                        type="button"
-                        onClick={() => toggleSwap(swap)}
-                        className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-                          selectedSwaps.includes(swap)
-                            ? "border-emerald-300 bg-emerald-100 text-emerald-800"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300"
-                        }`}
-                      >
-                        {swap}
-                      </button>
-                    ))}
-                  </div>
+                  {response.recommendation.optimal ? (
+                    <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
+                      Meal is optimal
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-slate-900">Suggested swaps</p>
+                      <div className="grid gap-2">
+                        {response.recommendation.swaps.map((swap) => (
+                          <div key={swap} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                            <p className="text-xs font-medium text-slate-700">{swap}</p>
+                            <button
+                              type="button"
+                              onClick={() => addSmartItemToCart(swap, "swap")}
+                              className="rounded-md bg-[#ff6b35] px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-[#e95e2a]"
+                            >
+                              Add to cart
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : null}
             </article>

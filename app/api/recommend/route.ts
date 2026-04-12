@@ -28,6 +28,7 @@ type Restaurant = {
 type Recommendation = {
 	title: string;
 	summary: string;
+	optimal: boolean;
 	dishes: Dish[];
 	restaurants: Restaurant[];
 	reasons: string[];
@@ -52,6 +53,7 @@ type RequestBody = {
 	locationLabel?: string;
 	userId?: string;
 	chosenSwaps?: string[];
+	cartItems?: string[];
 };
 
 const DEFAULT_LATITUDE = 12.9716;
@@ -175,6 +177,14 @@ function buildRestaurants(baseCell: string, craving: string): Restaurant[] {
 	}));
 }
 
+function isMealOptimal(cartItems: string[]) {
+	const text = cartItems.join(" ").toLowerCase();
+	const hasProtein = /(chicken|paneer|tofu|protein|fish|egg|dal|lentil)/.test(text);
+	const hasFiber = /(chickpea|lentil|broccoli|sprout|salad|greens|vegetable|veg|quinoa)/.test(text);
+	const hasHydration = /(yogurt|raita|cucumber|kefir|lassi|buttermilk)/.test(text);
+	return hasProtein && hasFiber && hasHydration;
+}
+
 function parseGroqRecommendation(raw: string) {
 	try {
 		const parsed = JSON.parse(raw) as {
@@ -266,6 +276,7 @@ async function enrichWithGroq(
 
 async function makeLocalRecommendation(body: RequestBody): Promise<Recommendation> {
 	const craving = normalize(body.craving, "Savory comfort food");
+	const cartItems = body.cartItems ?? [];
 	const diet = normalize(body.diet, "Balanced");
 	const allergies = normalize(body.allergies, "None");
 	const pantry = normalize(body.pantry, "Chicken, rice, garlic, spinach, yogurt");
@@ -286,10 +297,45 @@ async function makeLocalRecommendation(body: RequestBody): Promise<Recommendatio
 
 	const dishes = buildDishPlan(craving);
 	const restaurants = buildRestaurants(h3Cell, craving);
+	const optimal = isMealOptimal(cartItems.length > 0 ? cartItems : [craving]);
+
+	if (optimal) {
+		await retainInHindsight(
+			bankId,
+			[
+				`Diet: ${diet}`,
+				`Allergies: ${allergies}`,
+				`Cart items: ${cartItems.join(", ") || craving}`,
+				`H3 cell: ${h3Cell}`,
+				"Optimal status reached: true",
+			].join(" | "),
+			["cart", "nutrition", "optimal"],
+		);
+
+		return {
+			title: "Meal is optimal",
+			summary:
+				"Your current cart already balances protein, fiber, and hydration support. You can proceed to checkout or request alternatives.",
+			optimal: true,
+			dishes: [],
+			restaurants,
+			reasons: [],
+			swaps: [],
+			location: {
+				label: locationLabel,
+				latitude,
+				longitude,
+				h3Cell,
+				nearbyCellCount,
+			},
+			mission: HINDSIGHT_MISSION,
+		};
+	}
 
 	const baseRecommendation: Recommendation = {
 		title: `${craving} but nutritionally upgraded`,
 		summary: `Built around ${craving.toLowerCase()} near ${locationLabel}. The plan keeps the craving intact and fills nutrient gaps with practical add-ons.${recalledMemories.length > 0 ? " Past preferences were reused." : ""}`,
+		optimal: false,
 		dishes,
 		restaurants,
 		reasons: [
