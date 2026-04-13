@@ -7,32 +7,42 @@ type DishItemProps = {
 
 export default function DishItem({ name, rationale, nutrients, onAddToCart }: DishItemProps) {
   return (
-    <article className="rounded-2xl border border-white/60 bg-white/90 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.08)]">
-      <div className="flex items-start justify-between gap-3">
-        <h4 className="text-base font-semibold text-slate-950">{name}</h4>
-        <span className="rounded-full bg-[#fff1db] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#a65b00]">
-          Nutrient fit
-        </span>
-      </div>
-      <p className="mt-2 text-sm leading-6 text-slate-700">{rationale}</p>
-      {onAddToCart ? (
-        <button
-          type="button"
-          onClick={onAddToCart}
-          className="mt-3 rounded-lg bg-[#ff6b35] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#e95e2a]"
-        >
-          Add to cart
-        </button>
-      ) : null}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {nutrients.map((nutrient) => (
-          <span
-            key={nutrient}
-            className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800"
+    <article className="group flex gap-6 items-start bg-transparent py-4 border-b border-surface-container last:border-b-0">
+      <div className="flex flex-col justify-between h-full py-1 flex-grow">
+        <div>
+          <div className="flex justify-between items-start mb-1">
+            <h3 className="font-body font-bold text-primary tracking-tight text-lg">{name}</h3>
+            <span className="bg-secondary-fixed text-on-secondary-fixed-variant px-2 py-0.5 text-[9px] uppercase tracking-tighter font-semibold">
+              Nutrient fit
+            </span>
+          </div>
+          <p className="text-stone-500 text-sm font-light leading-relaxed max-w-sm mt-1">{rationale}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {nutrients.map((nutrient) => (
+              <span
+                key={nutrient}
+                className="text-xs text-primary border-b border-primary/20 pb-0.5"
+              >
+                {nutrient}
+              </span>
+            ))}
+          </div>
+        </div>
+        
+        {onAddToCart && (
+          <button 
+            type="button"
+            onClick={onAddToCart}
+            className="mt-5 self-start flex items-center gap-2 group/btn"
           >
-            {nutrient}
-          </span>
-        ))}
+            <span className="w-8 h-8 flex items-center justify-center border border-primary text-primary group-hover/btn:bg-primary group-hover/btn:text-on-primary transition-all">
+              <span className="material-symbols-outlined text-lg">add</span>
+            </span>
+            <span className="text-[10px] uppercase tracking-widest font-bold text-primary group-hover/btn:text-secondary transition-colors">
+              Add to Selection
+            </span>
+          </button>
+        )}
       </div>
     </article>
   );
