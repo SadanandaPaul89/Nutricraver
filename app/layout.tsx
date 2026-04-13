@@ -1,20 +1,22 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Noto_Serif } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const notoSerif = Noto_Serif({
+  variable: "--font-noto-serif",
   subsets: ["latin"],
+  style: ["normal", "italic"],
+  weight: ["400", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "NutriCraver | Craving-to-meal recommendations",
-  description: "NutriCraver turns a craving and pantry list into a practical meal recommendation.",
+  title: "NutriCraver | Exquisite Culinary Curation",
+  description: "Curated culinary experiences honoring your body's biometric needs.",
 };
 
 export default function RootLayout({
@@ -25,9 +27,17 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`light ${inter.variable} ${notoSerif.variable} antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <head>
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@300,0..1&display=swap"
+        />
+      </head>
+      <body className="min-h-screen flex flex-col font-body bg-surface text-on-surface selection:bg-secondary-fixed selection:text-on-secondary-fixed">
+        {children}
+      </body>
     </html>
   );
 }
