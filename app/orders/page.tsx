@@ -1,55 +1,110 @@
-import Navbar from "@/app/components/Navbar";
+"use client";
 
-const ORDERS = [
-  {
-    id: "ORD-1029",
-    date: "12 Apr 2026",
-    status: "Delivered",
-    total: 578,
-    items: "Butter Chicken Bowl, Chickpea Kachumber",
-  },
-  {
-    id: "ORD-1024",
-    date: "10 Apr 2026",
-    status: "Delivered",
-    total: 349,
-    items: "High Protein Chicken Bowl",
-  },
-  {
-    id: "ORD-1017",
-    date: "06 Apr 2026",
-    status: "Cancelled",
-    total: 239,
-    items: "Paneer Tikka Wrap",
-  },
-];
+import { useEffect, useState } from "react";
+import Footer from "@/app/components/Footer";
+import Navbar from "@/app/components/Navbar";
+import AuthGuard from "@/app/components/AuthGuard";
+import { useAuth } from "@/app/context/AuthContext";
+import { subscribeToOrders, type Order } from "@/lib/firestore";
 
 export default function OrdersPage() {
+  const { user } = useAuth();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = subscribeToOrders(user.uid, (data) => {
+      setOrders(data);
+      setLoadingOrders(false);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  function formatDate(date: Date) {
+    return date.toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
   return (
-    <main className="min-h-screen bg-[linear-gradient(130deg,#fff4e7_0%,#fef9f3_45%,#f3fbf7_100%)] px-5 py-6 sm:px-8">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-        <Navbar />
+    <>
+      <Navbar />
+      <AuthGuard>
+        <main className="w-full flex-1 max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16">
+          <section className="mb-16 border-l-4 border-secondary pl-6 md:pl-10">
+            <p className="text-[10px] font-sans uppercase tracking-[0.2em] text-secondary font-bold">Order History</p>
+            <h1 className="mt-2 text-4xl font-serif italic text-primary">Your Culinary Journey</h1>
+          </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_18px_36px_rgba(15,23,42,0.08)]">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Order History</p>
-          <h1 className="mt-2 text-3xl font-semibold text-slate-950">Your recent orders</h1>
-
-          <div className="mt-5 grid gap-3">
-            {ORDERS.map((order) => (
-              <article key={order.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-slate-900">{order.id}</p>
-                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${order.status === "Delivered" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-700"}`}>
-                    {order.status}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-slate-700">{order.items}</p>
-                <p className="mt-1 text-xs text-slate-600">{order.date} • Rs {order.total}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      </div>
-    </main>
+          {loadingOrders ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="flex flex-col items-center gap-4">
+                <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                <p className="text-[10px] font-sans uppercase tracking-[0.2em] text-stone-400">
+                  Loading your orders...
+                </p>
+              </div>
+            </div>
+          ) : orders.length === 0 ? (
+            <section className="max-w-4xl">
+              <div className="bg-surface-container-low p-12 editorial-shadow flex flex-col items-center justify-center text-center">
+                <span className="material-symbols-outlined text-outline-variant mb-4 text-5xl">receipt_long</span>
+                <h2 className="text-xl font-serif italic text-primary mb-2">No orders yet</h2>
+                <p className="text-sm text-stone-500 font-body max-w-md">
+                  Your culinary journey begins with a single selection. Browse our artisans and curate your first order.
+                </p>
+                <a
+                  href="/"
+                  className="mt-6 text-[10px] font-sans font-bold uppercase tracking-widest border border-primary text-primary px-6 py-3 hover:bg-primary hover:text-on-primary transition-all"
+                >
+                  Start Curating
+                </a>
+              </div>
+            </section>
+          ) : (
+            <section className="max-w-4xl grid gap-6">
+              {orders.map((order) => (
+                <article
+                  key={order.id}
+                  className="bg-surface-container-low p-6 editorial-shadow flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+                >
+                  <div>
+                    <div className="flex items-center gap-4 mb-2">
+                      <p className="text-lg font-serif text-primary">{order.trackingId || order.id}</p>
+                      <span
+                        className={`text-[9px] uppercase tracking-widest font-bold px-2 py-1 ${
+                          order.status === "Delivered"
+                            ? "bg-primary-fixed-dim/30 text-primary"
+                            : order.status === "Cancelled"
+                              ? "bg-error-container text-error"
+                              : "bg-secondary-fixed/30 text-secondary"
+                        }`}
+                      >
+                        {order.status}
+                      </span>
+                    </div>
+                    <p className="text-sm text-stone-700 font-body">
+                      {order.items.map((i) => `${i.name} x${i.quantity}`).join(", ")}
+                    </p>
+                  </div>
+                  <div className="sm:text-right sm:min-w-[120px] mt-2 sm:mt-0">
+                    <p className="font-serif italic text-secondary text-lg">Rs {order.total}</p>
+                    <p className="text-[10px] uppercase tracking-widest text-stone-500 mt-1">
+                      {formatDate(order.createdAt)}
+                    </p>
+                  </div>
+                </article>
+              ))}
+            </section>
+          )}
+        </main>
+      </AuthGuard>
+      <Footer />
+    </>
   );
 }

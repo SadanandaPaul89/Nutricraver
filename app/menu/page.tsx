@@ -1,3 +1,4 @@
+import Footer from "@/app/components/Footer";
 import Navbar from "@/app/components/Navbar";
 
 const MENU_CATEGORIES = [
@@ -17,25 +18,25 @@ const MENU_CATEGORIES = [
 
 export default function MenuPage() {
   return (
-    <main className="min-h-screen bg-[linear-gradient(130deg,#fff4e7_0%,#fef9f3_45%,#f3fbf7_100%)] px-5 py-6 sm:px-8">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-        <Navbar />
-
-        <section className="rounded-3xl border border-white/60 bg-[linear-gradient(120deg,#ff6b35_0%,#ff9952_100%)] p-6 text-white shadow-[0_20px_42px_rgba(208,89,0,0.2)]">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-orange-100">Menu</p>
-          <h1 className="mt-2 text-3xl font-semibold">Explore curated dishes</h1>
-          <p className="mt-2 max-w-2xl text-sm text-orange-50">
-            Pick signature meals and add nutrient-friendly sides from our category-first menu view.
+    <>
+      <Navbar />
+      <main className="w-full flex-1 max-w-screen-2xl mx-auto px-6 lg:px-8 py-12 lg:py-16">
+        <section className="mb-16 border-l-4 border-secondary pl-6 md:pl-10">
+          <p className="text-[10px] font-sans uppercase tracking-[0.2em] text-secondary font-bold">Menu</p>
+          <h1 className="mt-2 text-4xl font-serif italic text-primary">Explore Curated Dishes</h1>
+          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-stone-600 font-body">
+            Pick signature meals and add nutrient-friendly sides from our category-first curation.
           </p>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-12 md:grid-cols-3">
           {MENU_CATEGORIES.map((category) => (
-            <article key={category.title} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_12px_26px_rgba(15,23,42,0.07)]">
-              <h2 className="text-lg font-semibold text-slate-900">{category.title}</h2>
-              <ul className="mt-3 space-y-2 text-sm text-slate-700">
+            <article key={category.title} className="bg-surface-container-low p-8 editorial-shadow">
+              <h2 className="text-xl font-serif text-primary border-b border-surface-container pb-4">{category.title}</h2>
+              <ul className="mt-6 space-y-4">
                 {category.items.map((item) => (
-                  <li key={item} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                  <li key={item} className="flex items-center gap-4 text-sm font-body text-stone-700">
+                    <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
                     {item}
                   </li>
                 ))}
@@ -43,7 +44,8 @@ export default function MenuPage() {
             </article>
           ))}
         </section>
-      </div>
-    </main>
+      </main>
+      <Footer />
+    </>
   );
 }

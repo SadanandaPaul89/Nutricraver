@@ -1,10 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Chatbot, { type ChatMessage } from "@/app/components/Chatbot";
 import DishItem from "@/app/components/DishItem";
 import Navbar from "@/app/components/Navbar";
+import Footer from "@/app/components/Footer";
 import RestaurantList, { type MenuItem, type Restaurant } from "@/app/components/RestaurantList";
+import { useAuth } from "@/app/context/AuthContext";
+import {
+  createOrder,
+  getCart,
+  getUserProfile,
+  saveCart,
+  clearCart,
+  saveChatMessage,
+  getChatHistory,
+  type CartItemDoc,
+} from "@/lib/firestore";
 
 type Recommendation = {
   title: string;
@@ -161,7 +173,9 @@ function detectAllergies(message: string) {
 }
 
 export default function Home() {
-  const [userId] = useState("guest-user");
+  const { user } = useAuth();
+  const userId = user?.uid ?? "guest-user";
+
   const [diet, setDiet] = useState("Balanced");
   const [allergies, setAllergies] = useState("None");
   const [pantry, setPantry] = useState("Yogurt, chickpeas, greens");
@@ -182,6 +196,83 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<ApiResponse | null>(null);
+  const [cartLoaded, setCartLoaded] = useState(false);
+
+  // Debounce timer for cart persistence
+  const cartSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load user profile + cart from Firestore on login
+  useEffect(() => {
+    if (!user) {
+      setCartLoaded(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadUserData() {
+      try {
+        const [profile, savedCart, history] = await Promise.all([
+          getUserProfile(user!.uid),
+          getCart(user!.uid),
+          getChatHistory(user!.uid),
+        ]);
+
+        if (cancelled) return;
+
+        if (profile) {
+          if (profile.diet) setDiet(profile.diet);
+          if (profile.allergies) setAllergies(profile.allergies);
+          if (profile.deliveryArea) setLocationLabel(profile.deliveryArea);
+        }
+
+        if (savedCart.length > 0) {
+          setCartItems(
+            savedCart.map((item: CartItemDoc) => ({
+              id: item.id,
+              name: item.name,
+              price: item.price,
+              restaurantName: item.restaurantName,
+              quantity: item.quantity,
+            }))
+          );
+        }
+
+        if (history.length > 0) {
+          setChatMessages(
+            history.map((msg) => ({ role: msg.role, text: msg.text }))
+          );
+        }
+      } catch {
+        // Non-blocking — use defaults
+      } finally {
+        if (!cancelled) setCartLoaded(true);
+      }
+    }
+
+    loadUserData();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // Persist cart to Firestore (debounced) when logged in
+  const persistCart = useCallback(
+    (items: CartItem[]) => {
+      if (!user || !cartLoaded) return;
+
+      if (cartSaveTimer.current) {
+        clearTimeout(cartSaveTimer.current);
+      }
+
+      cartSaveTimer.current = setTimeout(() => {
+        saveCart(user.uid, items).catch(() => {
+          // Non-blocking
+        });
+      }, 800);
+    },
+    [user, cartLoaded]
+  );
 
   function slugify(value: string) {
     return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
@@ -189,12 +280,12 @@ export default function Home() {
 
   const cartTotal = useMemo(
     () => cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0),
-    [cartItems],
+    [cartItems]
   );
 
   const cartCraving = useMemo(
     () => cartItems.map((item) => `${item.name} x${item.quantity}`).join(", "),
-    [cartItems],
+    [cartItems]
   );
 
   function handleAddToCart(item: MenuItem, restaurant: Restaurant) {
@@ -202,22 +293,25 @@ export default function Home() {
     setResponse(null);
     setCartItems((current) => {
       const existing = current.find((entry) => entry.id === item.id);
+      let next: CartItem[];
       if (existing) {
-        return current.map((entry) =>
-          entry.id === item.id ? { ...entry, quantity: entry.quantity + 1 } : entry,
+        next = current.map((entry) =>
+          entry.id === item.id ? { ...entry, quantity: entry.quantity + 1 } : entry
         );
+      } else {
+        next = [
+          ...current,
+          {
+            id: item.id,
+            name: item.name,
+            price: item.price,
+            restaurantName: restaurant.name,
+            quantity: 1,
+          },
+        ];
       }
-
-      return [
-        ...current,
-        {
-          id: item.id,
-          name: item.name,
-          price: item.price,
-          restaurantName: restaurant.name,
-          quantity: 1,
-        },
-      ];
+      persistCart(next);
+      return next;
     });
   }
 
@@ -225,13 +319,16 @@ export default function Home() {
     setCheckoutStatus(null);
     setResponse(null);
     setCartItems((current) => {
+      let next: CartItem[];
       if (nextQuantity <= 0) {
-        return current.filter((item) => item.id !== itemId);
+        next = current.filter((item) => item.id !== itemId);
+      } else {
+        next = current.map((item) =>
+          item.id === itemId ? { ...item, quantity: nextQuantity } : item
+        );
       }
-
-      return current.map((item) =>
-        item.id === itemId ? { ...item, quantity: nextQuantity } : item,
-      );
+      persistCart(next);
+      return next;
     });
   }
 
@@ -243,6 +340,11 @@ export default function Home() {
 
     setChatMessages((current) => [...current, { role: "user", text: trimmed }]);
     setChatDraft("");
+
+    // Persist user message to Firestore (non-blocking)
+    if (user) {
+      saveChatMessage(user.uid, "user", trimmed).catch(() => {});
+    }
 
     setChatLoading(true);
     try {
@@ -277,19 +379,28 @@ export default function Home() {
         setPantry(pantryMatch[1].trim());
       }
 
-      setChatMessages((current) => [...current, { role: "assistant", text: data.reply }]);
+      const reply = data.reply;
+      setChatMessages((current) => [...current, { role: "assistant", text: reply }]);
+
+      // Persist assistant reply to Firestore (non-blocking)
+      if (user) {
+        saveChatMessage(user.uid, "assistant", reply).catch(() => {});
+      }
     } catch {
       const nextDiet = detectDiet(trimmed);
       const nextAllergies = detectAllergies(trimmed);
       setDiet(nextDiet);
       setAllergies(nextAllergies);
+      const fallbackReply = `Saved. Diet: ${nextDiet}. Allergies: ${nextAllergies}. Add items to cart and tap Smart Recommend in cart for suggestions.`;
       setChatMessages((current) => [
         ...current,
-        {
-          role: "assistant",
-          text: `Saved. Diet: ${nextDiet}. Allergies: ${nextAllergies}. Add items to cart and tap Smart Recommend in cart for suggestions.`,
-        },
+        { role: "assistant", text: fallbackReply },
       ]);
+
+      // Persist fallback reply too
+      if (user) {
+        saveChatMessage(user.uid, "assistant", fallbackReply).catch(() => {});
+      }
     } finally {
       setChatLoading(false);
     }
@@ -299,7 +410,7 @@ export default function Home() {
     setSelectedSwaps((current) =>
       current.includes(swap)
         ? current.filter((entry) => entry !== swap)
-        : [...current, swap],
+        : [...current, swap]
     );
   }
 
@@ -309,22 +420,25 @@ export default function Home() {
 
     setCartItems((current) => {
       const existing = current.find((item) => item.id === id);
+      let next: CartItem[];
       if (existing) {
-        return current.map((item) =>
-          item.id === id ? { ...item, quantity: item.quantity + 1 } : item,
+        next = current.map((item) =>
+          item.id === id ? { ...item, quantity: item.quantity + 1 } : item
         );
+      } else {
+        next = [
+          ...current,
+          {
+            id,
+            name: itemName,
+            price,
+            restaurantName: "NutriCraver Smart Add-on",
+            quantity: 1,
+          },
+        ];
       }
-
-      return [
-        ...current,
-        {
-          id,
-          name: itemName,
-          price,
-          restaurantName: "NutriCraver Smart Add-on",
-          quantity: 1,
-        },
-      ];
+      persistCart(next);
+      return next;
     });
 
     if (source === "swap") {
@@ -332,14 +446,34 @@ export default function Home() {
     }
   }
 
-  function handleCheckout() {
+  async function handleCheckout() {
     if (cartItems.length === 0) {
       setError("Add items to cart before checkout.");
       return;
     }
 
     const checkoutId = `NC-${Math.floor(100000 + Math.random() * 900000)}`;
-    setCheckoutStatus(`Order placed successfully. Tracking ID: ${checkoutId}`);
+
+    // Save order to Firestore if logged in
+    if (user) {
+      try {
+        await createOrder(user.uid, {
+          items: cartItems.map((item) => ({
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+            restaurantName: item.restaurantName,
+          })),
+          total: cartTotal,
+          trackingId: checkoutId,
+        });
+        await clearCart(user.uid);
+      } catch {
+        // Non-blocking — order still proceeds locally
+      }
+    }
+
+    setCheckoutStatus(`Proceeding to provenance... Order placed. Tracking ID: ${checkoutId}`);
     setCartItems([]);
     setResponse(null);
     setError(null);
@@ -391,168 +525,198 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[linear-gradient(130deg,#fff3e4_0%,#fef8f1_45%,#eff9f4_100%)] text-slate-950">
-      <section className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-5 py-8 sm:px-8 lg:px-10">
-        <Navbar cartCount={cartItems.length} />
+    <>
+      <Navbar cartCount={cartItems.length} />
 
-        <header className="rounded-3xl border border-white/60 bg-[linear-gradient(120deg,#ff6b35_0%,#ff8f3f_34%,#ffa14a_100%)] p-6 text-white shadow-[0_24px_64px_rgba(208,89,0,0.3)] sm:p-8">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-100">NutriCraver</p>
-              <h1 className="mt-2 text-3xl font-semibold leading-tight sm:text-4xl">Zomato and Swiggy style flow with smart cart nutrition.</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-orange-50 sm:text-base">
-                Browse restaurants, add menu items to cart, and request recommendations only inside cart. Share preferences in AI chatbot.
+      <main className="w-full max-w-screen-2xl mx-auto px-6 lg:px-8 py-10 lg:grid lg:grid-cols-12 lg:gap-16 lg:items-start">
+        <div className="lg:col-span-8 space-y-16">
+          {/* Hero Section */}
+          <section className="relative h-[480px] flex items-center overflow-hidden bg-stone-900 border border-surface-container/50">
+            <img
+              className="absolute inset-0 w-full h-full object-cover brightness-[0.85]"
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDbStGGCIesP1j5p_ONda6CngXfdWNpmzWCPU99wLK0B_2BuubyZIUyKQ-G3T48wsUQGBFetLx44kmD_6QfbEGgYCxaAxvfJrbq6x-HKFtWKAuHG39yDuHmltTvWLB0LD0VftnwHGANALozTKWwsjWZP6UZsNHxhFfVJ4n29J2IKHgVwn1fVWpQvfemR2zeYB-ObaLmbC9rnQj8GpAWsYkDyYG2IHA3q_xty5P8FryJf9IN01pmHSw2oBgg6m9XY1rUNFRvs0E4yvgl"
+              alt="Fresh ingredients"
+            />
+            <div className="relative z-10 p-8 md:p-12 border-l-4 border-secondary bg-surface/95 backdrop-blur-md max-w-xl mx-8 shadow-2xl">
+              <h1 className="text-4xl md:text-5xl font-bold text-primary tracking-tighter leading-tight mb-4">
+                The Art of <br />
+                <span className="italic font-normal">Conscious Dining</span>
+              </h1>
+              <p className="text-stone-600 font-body mb-6 text-sm md:text-base leading-relaxed">
+                Experience a tailored culinary journey. Browse our artisans, curate your selection, and let our intelligence optimize your body's biometric needs.
               </p>
             </div>
-            <div className="rounded-2xl border border-white/30 bg-white/15 px-4 py-3 text-sm font-medium backdrop-blur">
-              {cartItems.length > 0 ? `${cartItems.length} items in cart` : "Start by adding food items"}
-            </div>
-          </div>
-        </header>
-
-        <div className="grid gap-6 lg:grid-cols-[1.18fr_0.82fr]">
-          <section className="rounded-3xl border border-slate-200/80 bg-white/85 p-5 shadow-[0_18px_38px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6">
-            <RestaurantList restaurants={MARKETPLACE_RESTAURANTS} onAddToCart={handleAddToCart} />
           </section>
 
-          <section className="space-y-4">
-            <Chatbot
-              messages={chatMessages}
-              draft={chatDraft}
-              onDraftChange={setChatDraft}
-              onSend={handleSendChat}
-              locationLabel={locationLabel}
-              onLocationLabelChange={setLocationLabel}
-              latitude={latitude}
-              onLatitudeChange={setLatitude}
-              longitude={longitude}
-              onLongitudeChange={setLongitude}
-              sending={chatLoading}
-            />
+          <Chatbot
+            messages={chatMessages}
+            draft={chatDraft}
+            onDraftChange={setChatDraft}
+            onSend={handleSendChat}
+            locationLabel={locationLabel}
+            onLocationLabelChange={setLocationLabel}
+            latitude={latitude}
+            onLatitudeChange={setLatitude}
+            longitude={longitude}
+            onLongitudeChange={setLongitude}
+            sending={chatLoading}
+          />
 
-            <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_16px_30px_rgba(15,23,42,0.08)] sm:p-6">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-slate-950">Your Cart</h3>
-                <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
-                  Rs {cartTotal}
-                </span>
+          <RestaurantList restaurants={MARKETPLACE_RESTAURANTS} onAddToCart={handleAddToCart} />
+        </div>
+
+        <aside className="lg:col-span-4 mt-16 lg:mt-0 relative">
+          <div className="sticky top-28 bg-surface-container-lowest p-8 editorial-shadow border border-surface-container/30">
+            <h3 className="text-2xl font-serif italic text-primary mb-6 border-b border-surface-container pb-4">
+              Your Curated Cart
+            </h3>
+
+            {cartItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <span className="material-symbols-outlined text-outline-variant mb-4 text-4xl">shopping_cart</span>
+                <p className="text-[10px] uppercase tracking-widest text-stone-400">The cart is currently silent</p>
               </div>
-
-              {cartItems.length === 0 ? (
-                <p className="mt-3 text-sm text-slate-600">Add dishes from restaurants to start building your cart.</p>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  {cartItems.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{item.name}</p>
-                          <p className="text-xs text-slate-600">{item.restaurantName}</p>
-                        </div>
-                        <p className="text-sm font-semibold text-slate-900">Rs {item.price * item.quantity}</p>
+            ) : (
+              <div className="space-y-6 mb-8">
+                {cartItems.map((item) => (
+                  <div key={item.id} className="flex flex-col gap-2 group">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="text-sm font-serif font-bold text-primary">{item.name}</h3>
+                        <p className="text-[9px] font-sans uppercase tracking-[0.2em] text-stone-500 mt-1">
+                          {item.restaurantName}
+                        </p>
                       </div>
-                      <div className="mt-2 flex items-center gap-2">
+                      <span className="text-sm font-serif text-primary">Rs {item.price * item.quantity}</span>
+                    </div>
+                    <div className="flex items-center justify-between mt-2">
+                      <div className="flex items-center border border-outline-variant/50 px-2 py-0.5 gap-3">
                         <button
                           type="button"
                           onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                          className="rounded-md border border-slate-300 px-2 py-0.5 text-sm"
+                          className="material-symbols-outlined text-sm text-stone-400 hover:text-primary transition-colors"
                         >
-                          -
+                          remove
                         </button>
-                        <span className="text-sm font-semibold">{item.quantity}</span>
+                        <span className="text-xs font-medium w-3 text-center">{item.quantity}</span>
                         <button
                           type="button"
                           onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                          className="rounded-md border border-slate-300 px-2 py-0.5 text-sm"
+                          className="material-symbols-outlined text-sm text-stone-400 hover:text-primary transition-colors"
                         >
-                          +
+                          add
                         </button>
                       </div>
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-4 border-t border-surface-container flex justify-between items-baseline mb-6">
+              <span className="text-sm font-sans uppercase tracking-widest text-primary">Subtotal</span>
+              <span className="text-xl font-serif text-primary">Rs {cartTotal}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={getCartRecommendation}
+              disabled={loading || cartItems.length === 0}
+              className="w-full bg-surface text-primary border border-primary py-4 text-xs uppercase tracking-[0.15em] font-bold hover:bg-primary-container hover:text-on-primary transition-all mb-4 disabled:opacity-50"
+            >
+              {loading ? "Analyzing Curations..." : "Smart Recommend"}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCheckout}
+              disabled={cartItems.length === 0}
+              className="w-full bg-primary text-on-primary py-4 text-[10px] uppercase tracking-[0.2em] font-bold hover:bg-primary-container transition-all shadow-lg active:opacity-80 disabled:opacity-50"
+            >
+              Proceed to Provenance
+            </button>
+
+            {checkoutStatus && (
+              <div className="mt-4 p-3 bg-tertiary-fixed text-on-tertiary-fixed-variant text-xs border-l-2 border-primary tracking-wide">
+                {checkoutStatus}
+              </div>
+            )}
+            {error && (
+              <div className="mt-4 p-3 bg-error-container text-error text-xs border-l-2 border-error tracking-wide">
+                {error}
+              </div>
+            )}
+
+            {response && (
+              <div className="mt-8 border-t border-surface-container pt-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="material-symbols-outlined text-secondary" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    eco
+                  </span>
+                  <div>
+                    <h4 className="text-[10px] font-sans uppercase tracking-[0.2em] text-secondary font-bold">
+                      Cart Intelligence
+                    </h4>
+                    <p className="text-sm font-serif italic text-primary mt-1">{response.recommendation.title}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-stone-600 mb-6 leading-relaxed bg-surface px-3 py-2 border-l-2 border-secondary">
+                  {response.recommendation.summary}
+                </p>
+
+                <div className="grid gap-2">
+                  {response.recommendation.dishes.map((dish) => (
+                    <DishItem
+                      key={dish.name}
+                      name={dish.name}
+                      rationale={dish.rationale}
+                      nutrients={dish.nutrients}
+                      onAddToCart={() => addSmartItemToCart(dish.name, "dish")}
+                    />
                   ))}
                 </div>
-              )}
 
-              <button
-                type="button"
-                onClick={getCartRecommendation}
-                disabled={loading || cartItems.length === 0}
-                className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-[#111827] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {loading ? "Analyzing cart nutrition..." : "Smart Recommend in Cart"}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleCheckout}
-                disabled={cartItems.length === 0}
-                className="mt-2 inline-flex w-full items-center justify-center rounded-2xl bg-[#ff6b35] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#e95e2a] disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                Checkout
-              </button>
-
-              {checkoutStatus ? (
-                <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                  {checkoutStatus}
-                </div>
-              ) : null}
-
-              {error ? (
-                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
-              ) : null}
-
-              {response ? (
-                <div className="mt-5 space-y-4 rounded-2xl border border-emerald-200 bg-[#f2fcf7] p-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#0b7f5f]">Cart Intelligence</p>
-                    <h4 className="mt-1 text-xl font-semibold text-slate-950">{response.recommendation.title}</h4>
-                    <p className="mt-2 text-sm leading-6 text-slate-700">{response.recommendation.summary}</p>
-                    <p className="mt-1 text-xs text-slate-600">
-                      Cell {response.recommendation.location.h3Cell} in {response.recommendation.location.label}
+                {!response.recommendation.optimal ? (
+                  <div className="mt-6">
+                    <p className="font-serif italic text-primary text-sm border-b border-surface-container pb-2 mb-4">
+                      Suggested Curations
                     </p>
-                  </div>
-
-                  <div className="grid gap-3">
-                    {response.recommendation.dishes.map((dish) => (
-                      <DishItem
-                        key={dish.name}
-                        name={dish.name}
-                        rationale={dish.rationale}
-                        nutrients={dish.nutrients}
-                        onAddToCart={() => addSmartItemToCart(dish.name, "dish")}
-                      />
-                    ))}
-                  </div>
-
-                  {response.recommendation.optimal ? (
-                    <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
-                      Meal is optimal
+                    <div className="space-y-3">
+                      {response.recommendation.swaps.map((swap) => (
+                        <div key={swap} className="flex items-center justify-between gap-4 p-2 bg-surface hover:bg-surface-container-low transition-colors">
+                          <p className="text-xs text-stone-700 font-medium">{swap}</p>
+                          <button
+                            type="button"
+                            onClick={() => addSmartItemToCart(swap, "swap")}
+                            className="bg-primary text-on-primary px-3 py-1.5 text-[9px] uppercase tracking-widest font-bold hover:bg-secondary-fixed hover:text-on-secondary-fixed transition-colors whitespace-nowrap"
+                          >
+                            Add
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-sm font-semibold text-slate-900">Suggested swaps</p>
-                      <div className="grid gap-2">
-                        {response.recommendation.swaps.map((swap) => (
-                          <div key={swap} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
-                            <p className="text-xs font-medium text-slate-700">{swap}</p>
-                            <button
-                              type="button"
-                              onClick={() => addSmartItemToCart(swap, "swap")}
-                              className="rounded-md bg-[#ff6b35] px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-[#e95e2a]"
-                            >
-                              Add to cart
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </article>
-          </section>
-        </div>
-      </section>
-    </main>
+                  </div>
+                ) : (
+                  <div className="mt-6 p-3 bg-tertiary-fixed text-on-tertiary-fixed-variant text-xs text-center border border-primary/20">
+                    Your selection is nutritionally optimal.
+                  </div>
+                )}
+              </div>
+            )}
+            
+            <div className="mt-8 pt-4 border-t border-surface-container flex justify-center">
+              <div className="bg-secondary-fixed text-on-secondary-fixed-variant px-4 py-1 flex items-center gap-2 max-w-fit mx-auto">
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  verified
+                </span>
+                <span className="text-[9px] font-sans font-bold uppercase tracking-widest">Sustainably Sourced</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <Footer />
+    </>
   );
 }

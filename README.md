@@ -8,7 +8,7 @@ Browse restaurants and dishes.
 Add items to cart like a regular delivery app.
 Chat with the built-in AI to share needs, for example:
 “I want high-protein meals”
-“I’m allergic to peanuts”
+“I am allergic to peanuts”
 “I want more fiber with dinner”
 Tap Smart Recommend in Cart to get healthier pairings and swaps based on what is already in your cart.
 Checkout normally.
